@@ -1,0 +1,197 @@
+package com.example.data.local
+
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import java.security.MessageDigest
+
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "yadet_settings")
+
+enum class AppThemeMode(val persianLabel: String) {
+    SYSTEM("خودکار (سیستم)"),
+    LIGHT("تم روشن"),
+    DARK("تم تاریک")
+}
+
+enum class CalendarSystem(val persianLabel: String) {
+    JALALI("تقویم شمسی"),
+    GREGORIAN("تقویم میلادی")
+}
+
+enum class AiProviderType(val persianLabel: String, val defaultBaseUrl: String, val defaultModel: String) {
+    NONE("بدون مدل (آفلاین)", "", ""),
+    OPENAI_COMPATIBLE("سازگار با OpenAI", "https://api.openai.com/v1", "gpt-4o-mini"),
+    GEMINI_REST("Google Gemini (کلید شخصی)", "https://generativelanguage.googleapis.com/v1beta", "gemini-2.5-flash"),
+    OPENROUTER("OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-4o-mini"),
+    CUSTOM("سرور اختصاصی / محلی (Ollama و غیره)", "http://10.0.2.2:11434/v1", "llama3.2")
+}
+
+data class YadetSettings(
+    val themeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    val calendarSystem: CalendarSystem = CalendarSystem.JALALI,
+    val is24Hour: Boolean = true,
+    val defaultLeadMinutes: Int = 0,
+    val notificationSound: Boolean = true,
+    val notificationVibration: Boolean = true,
+    val defaultSnoozeMinutes: Int = 10,
+    val voiceTtsEnabled: Boolean = false,
+    val aiProvider: AiProviderType = AiProviderType.NONE,
+    val aiBaseUrl: String = "",
+    val aiModelName: String = "",
+    val aiFallbackModelName: String = "",
+    val aiOnlineEnabled: Boolean = true,
+    val aiMaxTokens: Int = 1024,
+    val webSearchEnabled: Boolean = false,
+    val appLockEnabled: Boolean = false,
+    val appLockPinHash: String = "",
+    val hasApiKey: Boolean = false
+)
+
+class SettingsDataStore(private val context: Context) {
+
+    private object Keys {
+        val THEME_MODE = stringPreferencesKey("theme_mode")
+        val CALENDAR_SYSTEM = stringPreferencesKey("calendar_system")
+        val IS_24_HOUR = booleanPreferencesKey("is_24_hour")
+        val DEFAULT_LEAD_MINUTES = intPreferencesKey("default_lead_minutes")
+        val NOTIFICATION_SOUND = booleanPreferencesKey("notification_sound")
+        val NOTIFICATION_VIBRATION = booleanPreferencesKey("notification_vibration")
+        val DEFAULT_SNOOZE_MINUTES = intPreferencesKey("default_snooze_minutes")
+        val VOICE_TTS_ENABLED = booleanPreferencesKey("voice_tts_enabled")
+        val AI_PROVIDER = stringPreferencesKey("ai_provider")
+        val AI_BASE_URL = stringPreferencesKey("ai_base_url")
+        val AI_MODEL_NAME = stringPreferencesKey("ai_model_name")
+        val AI_FALLBACK_MODEL_NAME = stringPreferencesKey("ai_fallback_model_name")
+        val AI_ONLINE_ENABLED = booleanPreferencesKey("ai_online_enabled")
+        val AI_MAX_TOKENS = intPreferencesKey("ai_max_tokens")
+        val WEB_SEARCH_ENABLED = booleanPreferencesKey("web_search_enabled")
+        val APP_LOCK_ENABLED = booleanPreferencesKey("app_lock_enabled")
+        val APP_LOCK_PIN_HASH = stringPreferencesKey("app_lock_pin_hash")
+        val ENCRYPTED_API_KEY = stringPreferencesKey("encrypted_api_key")
+    }
+
+    val settingsFlow: Flow<YadetSettings> = context.dataStore.data.map { prefs ->
+        val provider = runCatching {
+            AiProviderType.valueOf(prefs[Keys.AI_PROVIDER] ?: AiProviderType.NONE.name)
+        }.getOrDefault(AiProviderType.NONE)
+
+        YadetSettings(
+            themeMode = runCatching {
+                AppThemeMode.valueOf(prefs[Keys.THEME_MODE] ?: AppThemeMode.SYSTEM.name)
+            }.getOrDefault(AppThemeMode.SYSTEM),
+            calendarSystem = runCatching {
+                CalendarSystem.valueOf(prefs[Keys.CALENDAR_SYSTEM] ?: CalendarSystem.JALALI.name)
+            }.getOrDefault(CalendarSystem.JALALI),
+            is24Hour = prefs[Keys.IS_24_HOUR] ?: true,
+            defaultLeadMinutes = prefs[Keys.DEFAULT_LEAD_MINUTES] ?: 0,
+            notificationSound = prefs[Keys.NOTIFICATION_SOUND] ?: true,
+            notificationVibration = prefs[Keys.NOTIFICATION_VIBRATION] ?: true,
+            defaultSnoozeMinutes = prefs[Keys.DEFAULT_SNOOZE_MINUTES] ?: 10,
+            voiceTtsEnabled = prefs[Keys.VOICE_TTS_ENABLED] ?: false,
+            aiProvider = provider,
+            aiBaseUrl = prefs[Keys.AI_BASE_URL] ?: provider.defaultBaseUrl,
+            aiModelName = prefs[Keys.AI_MODEL_NAME] ?: provider.defaultModel,
+            aiFallbackModelName = prefs[Keys.AI_FALLBACK_MODEL_NAME] ?: "",
+            aiOnlineEnabled = prefs[Keys.AI_ONLINE_ENABLED] ?: true,
+            aiMaxTokens = prefs[Keys.AI_MAX_TOKENS] ?: 1024,
+            webSearchEnabled = prefs[Keys.WEB_SEARCH_ENABLED] ?: false,
+            appLockEnabled = prefs[Keys.APP_LOCK_ENABLED] ?: false,
+            appLockPinHash = prefs[Keys.APP_LOCK_PIN_HASH] ?: "",
+            hasApiKey = !prefs[Keys.ENCRYPTED_API_KEY].isNullOrBlank()
+        )
+    }
+
+    suspend fun getDecryptedApiKey(): String {
+        val prefs = context.dataStore.data.first()
+        val enc = prefs[Keys.ENCRYPTED_API_KEY] ?: return ""
+        return SecureKeyManager.decrypt(enc)
+    }
+
+    suspend fun saveApiKey(plainKey: String) {
+        context.dataStore.edit { prefs ->
+            if (plainKey.isBlank()) {
+                prefs.remove(Keys.ENCRYPTED_API_KEY)
+            } else {
+                prefs[Keys.ENCRYPTED_API_KEY] = SecureKeyManager.encrypt(plainKey.trim())
+            }
+        }
+    }
+
+    suspend fun updateThemeMode(mode: AppThemeMode) {
+        context.dataStore.edit { it[Keys.THEME_MODE] = mode.name }
+    }
+
+    suspend fun updateCalendarSystem(system: CalendarSystem) {
+        context.dataStore.edit { it[Keys.CALENDAR_SYSTEM] = system.name }
+    }
+
+    suspend fun updateIs24Hour(is24Hour: Boolean) {
+        context.dataStore.edit { it[Keys.IS_24_HOUR] = is24Hour }
+    }
+
+    suspend fun updateNotificationSettings(
+        leadMinutes: Int? = null,
+        sound: Boolean? = null,
+        vibration: Boolean? = null,
+        snoozeMinutes: Int? = null
+    ) {
+        context.dataStore.edit { prefs ->
+            leadMinutes?.let { prefs[Keys.DEFAULT_LEAD_MINUTES] = it.coerceIn(0, 120) }
+            sound?.let { prefs[Keys.NOTIFICATION_SOUND] = it }
+            vibration?.let { prefs[Keys.NOTIFICATION_VIBRATION] = it }
+            snoozeMinutes?.let { prefs[Keys.DEFAULT_SNOOZE_MINUTES] = it.coerceIn(1, 120) }
+        }
+    }
+
+    suspend fun updateVoiceTts(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.VOICE_TTS_ENABLED] = enabled }
+    }
+
+    suspend fun updateAiConfig(
+        provider: AiProviderType? = null,
+        baseUrl: String? = null,
+        modelName: String? = null,
+        fallbackModelName: String? = null,
+        onlineEnabled: Boolean? = null,
+        maxTokens: Int? = null,
+        webSearchEnabled: Boolean? = null
+    ) {
+        context.dataStore.edit { prefs ->
+            provider?.let { prefs[Keys.AI_PROVIDER] = it.name }
+            baseUrl?.let { prefs[Keys.AI_BASE_URL] = it.trim() }
+            modelName?.let { prefs[Keys.AI_MODEL_NAME] = it.trim() }
+            fallbackModelName?.let { prefs[Keys.AI_FALLBACK_MODEL_NAME] = it.trim() }
+            onlineEnabled?.let { prefs[Keys.AI_ONLINE_ENABLED] = it }
+            maxTokens?.let { prefs[Keys.AI_MAX_TOKENS] = it.coerceIn(128, 8192) }
+            webSearchEnabled?.let { prefs[Keys.WEB_SEARCH_ENABLED] = it }
+        }
+    }
+
+    suspend fun setAppLock(enabled: Boolean, pin: String? = null) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.APP_LOCK_ENABLED] = enabled
+            if (!pin.isNullOrBlank()) {
+                prefs[Keys.APP_LOCK_PIN_HASH] = hashPin(pin)
+            }
+        }
+    }
+
+    fun verifyPin(pin: String, storedHash: String): Boolean {
+        if (storedHash.isBlank()) return true
+        return hashPin(pin) == storedHash
+    }
+
+    private fun hashPin(pin: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val bytes = digest.digest("yadet_salt_$pin".toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+}

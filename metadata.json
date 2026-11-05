@@ -1,0 +1,6 @@
+{
+  "name": "Yadet",
+  "description": "دستیار هوش مصنوعی فارسی، مدیریت هوشمند زندگی، تقویم شمسی و یادآورها",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
