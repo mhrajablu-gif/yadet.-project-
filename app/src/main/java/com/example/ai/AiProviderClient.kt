@@ -169,7 +169,7 @@ class AiProviderClient(private val toolExecutor: ToolExecutor) {
             val resp = client.newCall(reqBuilder.build()).execute()
             val respStr = resp.body?.string() ?: ""
             if (!resp.isSuccessful) {
-                return AiResponse("خطای سرویس هوش مصنوعی (${resp.code})", executedTools, isError = true)
+                return AiResponse(formatHttpError(resp.code, model, respStr), executedTools, isError = true)
             }
 
             val respJson = JSONObject(respStr)
@@ -247,7 +247,7 @@ class AiProviderClient(private val toolExecutor: ToolExecutor) {
             val resp = client.newCall(req).execute()
             val respStr = resp.body?.string() ?: ""
             if (!resp.isSuccessful) {
-                return AiResponse("خطای سرویس Gemini (${resp.code})", executedTools, isError = true)
+                return AiResponse(formatHttpError(resp.code, model, respStr), executedTools, isError = true)
             }
 
             val respJson = JSONObject(respStr)
@@ -402,5 +402,17 @@ $memText
                     .put("description", description)
                     .put("parameters", params)
             )
+    }
+
+    private fun formatHttpError(code: Int, model: String, body: String): String {
+        val detail = runCatching {
+            JSONObject(body).optJSONObject("error")?.optString("message", "") ?: ""
+        }.getOrDefault("")
+        return when (code) {
+            401, 403 -> "خطای احراز هویت ($code): کلید API نامعتبر است یا مجوز دسترسی ندارد. ${detail.take(120)}"
+            404 -> "مدل یا آدرس سرور یافت نشد (404): نام مدل «$model» یا Base URL را بررسی کنید."
+            429 -> "سهمیه درخواست مدل «$model» به پایان رسیده است (429)."
+            else -> "خطای سرور هوش مصنوعی ($code): ${detail.ifBlank { "لطفاً تنظیمات مدل را بررسی کنید." }}"
+        }
     }
 }

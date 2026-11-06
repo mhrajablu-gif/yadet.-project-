@@ -193,12 +193,7 @@ object PersianCalendarUtils {
     ): Long {
         val (gy, gm, gd) = jalaliToGregorian(jalali.year, jalali.month, jalali.day)
         val cal = Calendar.getInstance(timeZone).apply {
-            set(Calendar.YEAR, gy)
-            set(Calendar.MONTH, gm - 1)
-            set(Calendar.DAY_OF_MONTH, gd)
-            set(Calendar.HOUR_OF_DAY, hour)
-            set(Calendar.MINUTE, minute)
-            set(Calendar.SECOND, 0)
+            set(gy, gm - 1, gd, hour, minute, 0)
             set(Calendar.MILLISECOND, 0)
         }
         return cal.timeInMillis

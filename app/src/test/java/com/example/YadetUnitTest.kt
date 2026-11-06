@@ -15,10 +15,21 @@ class YadetUnitTest {
 
     @Test
     fun testJalaliGregorianRoundTrip() {
-        val jalali = JalaliDate(1405, 8, 14)
-        val millis = PersianCalendarUtils.jalaliToMillis(jalali, 10, 30)
-        val back = PersianCalendarUtils.millisToJalali(millis)
-        assertEquals(jalali, back)
+        val testDates = listOf(
+            JalaliDate(1405, 8, 14),
+            JalaliDate(1405, 8, 25),
+            JalaliDate(1405, 8, 30),
+            JalaliDate(1405, 1, 15),
+            JalaliDate(1405, 6, 31),
+            JalaliDate(1403, 12, 30),
+            JalaliDate(1404, 12, 29),
+            JalaliDate(1405, 1, 1)
+        )
+        for (jalali in testDates) {
+            val millis = PersianCalendarUtils.jalaliToMillis(jalali, 8, 0)
+            val back = PersianCalendarUtils.millisToJalali(millis)
+            assertEquals("Failed for $jalali", jalali, back)
+        }
     }
 
     @Test

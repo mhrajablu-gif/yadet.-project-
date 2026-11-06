@@ -2,6 +2,8 @@ package com.example.ai
 
 import android.app.ActivityManager
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import com.example.data.local.AiProviderType
 import com.example.data.local.ChatMessageEntity
 import com.example.data.local.MemoryItemEntity
@@ -21,6 +23,13 @@ class AiManager(
         val memInfo = ActivityManager.MemoryInfo()
         am.getMemoryInfo(memInfo)
         return memInfo.totalMem >= 5_500_000_000L
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     suspend fun sendMessage(
@@ -51,10 +60,18 @@ class AiManager(
         }
 
         var lastErrorResponse: AiResponse? = null
+        val onlineAvailable = isNetworkAvailable()
+
         for (model in candidates) {
             val provider = multiConfig.providers.find { it.id == model.providerId } ?: continue
             if (!provider.isEnabled) continue
+            if (!model.isLocal && !onlineAvailable) continue
             if (provider.requiresApiKey && apiKey.isBlank()) continue
+            if (provider.requiresApiKey && legacySettings.aiProvider != AiProviderType.NONE &&
+                provider.providerType != legacySettings.aiProvider
+            ) {
+                continue
+            }
             if (model.isLocal && !isDeviceCapableForLocalModel()) continue
 
             val effectiveSettings = legacySettings.copy(
@@ -84,6 +101,13 @@ class AiManager(
             } else {
                 lastErrorResponse = response
             }
+        }
+
+        if (!onlineAvailable) {
+            return AiResponse(
+                text = "اتصال اینترنت برقرار نیست. برای گفتگو با مدل‌های ابری، اینترنت دستگاه را متصل کنید.",
+                isError = true
+            )
         }
 
         return lastErrorResponse ?: AiResponse(
